@@ -10,12 +10,9 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    env:
-      OWNER_LC: ${{ toLower(github.repository_owner) }}
-      IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/notes-api:${{ github.sha }}
+
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
 
       - name: Login GHCR
@@ -25,23 +22,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 1) Conftest (vía Docker)
       - name: Conftest (policies sobre compose)
         run: |
           docker run --rm -v "$PWD:/project" openpolicyagent/conftest:v0.53.0 \
             test /project/compose.yml -p /project/docker/conftest
 
-      - name: Build image
+      # 2) Build local con tag temporal (evitamos owner en mayúsculas)
+      - name: Build image (local, temp tag)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           push: false
-          load: true            # <-- necesario para poder 'docker save'
-          tags: ${{ env.IMAGE }}
+          load: true
+          tags: temp:build
 
-      - name: Export image to tar
-        run: docker save -o image.tar $IMAGE
+      - name: Export image to tar (para Trivy image)
+        run: docker save -o image.tar temp:build
 
+      # 3) Scans
       - name: Trivy FS (repo)
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -50,7 +50,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
 
-      - name: Trivy Image
+      - name: Trivy Image (sobre image.tar)
         uses: aquasecurity/trivy-action@0.28.0
         with:
           input: image.tar
@@ -62,27 +62,36 @@ jobs:
       - name: SBOM (Syft CycloneDX)
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.IMAGE }}
+          image: temp:build
           format: cyclonedx-json
           output-file: reports/sbom.cdx.json
 
-      - name: Push image to GHCR
+      # 4) Retag a minúsculas y push a GHCR
+      - name: Retag + Push to GHCR
         run: |
-          docker tag $IMAGE ghcr.io/${OWNER_LC}/notes-api:latest
-          docker push $IMAGE
-          docker push ghcr.io/${OWNER_LC}/notes-api:latest
+          OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER_LC}/notes-api:${GITHUB_SHA}"
+          LATEST="ghcr.io/${OWNER_LC}/notes-api:latest"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "LATEST=$LATEST" >> $GITHUB_ENV
 
+          docker tag temp:build "$IMAGE"
+          docker tag temp:build "$LATEST"
+          docker push "$IMAGE"
+          docker push "$LATEST"
+
+      # 5) Cosign sign/verify (keyless)
       - uses: sigstore/cosign-installer@v3
 
       - name: Cosign sign (keyless OIDC)
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign sign --yes $IMAGE
+        run: cosign sign --yes "$IMAGE"
 
       - name: Cosign verify
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign verify $IMAGE | tee reports/cosign_verify.txt
+        run: cosign verify "$IMAGE" | tee reports/cosign_verify.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
