@@ -22,13 +22,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Conftest via Docker (evita action vieja)
       - name: Conftest (policies sobre compose)
         run: |
           docker run --rm -v "$PWD:/project" openpolicyagent/conftest:v0.53.0 \
             test /project/compose.yml -p /project/docker/conftest
 
-      # Build local con tag temporal
       - name: Build image (local, temp tag)
         uses: docker/build-push-action@v6
         with:
@@ -41,7 +39,6 @@ jobs:
       - name: Export image to tar (para Trivy image)
         run: docker save -o image.tar temp:build
 
-      # Scans
       - name: Trivy FS (repo)
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -59,7 +56,6 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
 
-      # >>> CREA LA CARPETA REPORTS <<<
       - name: Prepare reports dir
         run: mkdir -p reports
 
@@ -70,7 +66,6 @@ jobs:
           format: cyclonedx-json
           output-file: reports/sbom.cdx.json
 
-      # Retag + Push a GHCR con owner en minúsculas
       - name: Retag + Push to GHCR
         run: |
           OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
@@ -90,10 +85,28 @@ jobs:
           COSIGN_EXPERIMENTAL: "1"
         run: cosign sign --yes "$IMAGE"
 
-      - name: Cosign verify
+      - name: Cosign verify (issuer + repo)
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign verify "$IMAGE" | tee reports/cosign_verify.txt
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.*" \
+            "$IMAGE" | tee reports/cosign_verify.txt
+
+      - name: Cosign attest SBOM (CycloneDX)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign attest --yes --predicate reports/sbom.cdx.json --type cyclonedx "$IMAGE"
+
+      - name: Verify attestation (CycloneDX)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify-attestation --type cyclonedx \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.*" \
+            "$IMAGE" > reports/cosign_verify_attest.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
