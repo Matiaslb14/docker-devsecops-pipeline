@@ -1,4 +1,4 @@
-Docker DevSecOps Pipeline (v0.1.0)
+# Docker DevSecOps Pipeline (v0.1.0)
 
 End-to-end supply-chain security for Docker images, automated with GitHub Actions.
 It includes OPA/Conftest, Trivy (FS + Image), CycloneDX SBOM (Syft), publish to GHCR, Cosign OIDC keyless signing + SBOM attestation (both verified in CI), OWASP ZAP DAST (gate on Medium/High), and strict runtime hardening.
