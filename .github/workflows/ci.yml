@@ -22,13 +22,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1) Conftest (vía Docker)
+      # Conftest via Docker (evita action vieja)
       - name: Conftest (policies sobre compose)
         run: |
           docker run --rm -v "$PWD:/project" openpolicyagent/conftest:v0.53.0 \
             test /project/compose.yml -p /project/docker/conftest
 
-      # 2) Build local con tag temporal (evitamos owner en mayúsculas)
+      # Build local con tag temporal
       - name: Build image (local, temp tag)
         uses: docker/build-push-action@v6
         with:
@@ -41,7 +41,7 @@ jobs:
       - name: Export image to tar (para Trivy image)
         run: docker save -o image.tar temp:build
 
-      # 3) Scans
+      # Scans
       - name: Trivy FS (repo)
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -59,6 +59,10 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
 
+      # >>> CREA LA CARPETA REPORTS <<<
+      - name: Prepare reports dir
+        run: mkdir -p reports
+
       - name: SBOM (Syft CycloneDX)
         uses: anchore/sbom-action@v0
         with:
@@ -66,7 +70,7 @@ jobs:
           format: cyclonedx-json
           output-file: reports/sbom.cdx.json
 
-      # 4) Retag a minúsculas y push a GHCR
+      # Retag + Push a GHCR con owner en minúsculas
       - name: Retag + Push to GHCR
         run: |
           OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
@@ -74,13 +78,11 @@ jobs:
           LATEST="ghcr.io/${OWNER_LC}/notes-api:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           echo "LATEST=$LATEST" >> $GITHUB_ENV
-
           docker tag temp:build "$IMAGE"
           docker tag temp:build "$LATEST"
           docker push "$IMAGE"
           docker push "$LATEST"
 
-      # 5) Cosign sign/verify (keyless)
       - uses: sigstore/cosign-installer@v3
 
       - name: Cosign sign (keyless OIDC)
