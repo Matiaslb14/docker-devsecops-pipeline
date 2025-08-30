@@ -10,13 +10,11 @@ jobs:
       id-token: write
       contents: read
       packages: write
+    env:
+      OWNER_LC: ${{ toLower(github.repository_owner) }}
+      IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/notes-api:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Normalize owner to lowercase
-        run: |
-          echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
-          echo "IMAGE=ghcr.io/${OWNER_LC}/notes-api:${GITHUB_SHA}" >> $GITHUB_ENV
 
       - uses: docker/setup-buildx-action@v3
 
@@ -27,7 +25,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🔁 Reemplazo de instrumenta/conftest-action -> Docker run
       - name: Conftest (policies sobre compose)
         run: |
           docker run --rm -v "$PWD:/project" openpolicyagent/conftest:v0.53.0 \
@@ -39,6 +36,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: false
+          load: true            # <-- necesario para poder 'docker save'
           tags: ${{ env.IMAGE }}
 
       - name: Export image to tar
