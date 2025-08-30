@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: ghcr.io/matiaslb14/notes-api:latest
+    ports: ["8080:8000"]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+      # - seccomp:./docker/seccomp.json   # lo agregamos luego
+    pids_limit: 200
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
+    environment:
+      - UVICORN_WORKERS=1
