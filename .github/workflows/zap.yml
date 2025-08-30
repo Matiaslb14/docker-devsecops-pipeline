@@ -1,6 +1,5 @@
 name: dast-zap
 on:
-  push: { branches: ["main"] }
   pull_request: {}
   workflow_dispatch: {}
 
@@ -10,24 +9,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - run: docker compose build
-      - run: docker compose up -d
-      - name: Wait for API
-        run: for i in {1..30}; do curl -sf http://localhost:8080/ && break || sleep 2; done
-      - name: ZAP full scan (JSON report)
+
+      - name: Build & up
+        run: |
+          docker compose build
+          docker compose up -d
+          for i in {1..30}; do curl -sf http://localhost:8080/ && break || sleep 2; done
+
+      - name: ZAP full scan (JSON + HTML)
         uses: zaproxy/action-full-scan@v0.7.0
         with:
           target: 'http://localhost:8080/'
-          cmd_options: '-a -m 3 -J reports/zap.json -w reports/zap.html'
+          cmd_options: >-
+            -a -m 3
+            -J reports/zap.json
+            -w reports/zap.html
           allow_issue_writing: false
           fail_action: false
+
       - name: Gate: fail if Medium/High alerts
         run: |
+          sudo apt-get update && sudo apt-get install -y jq
           test -f reports/zap.json || { echo "No ZAP JSON"; exit 1; }
           N=$(jq '[.site[].alerts[] | select((.riskcode|tonumber) >= 2)] | length' reports/zap.json)
           echo "ZAP Medium/High alerts: $N"
           if [ "$N" -gt 0 ]; then
             echo "❌ ZAP encontró $N alertas Medium/High"; exit 1
           fi
+
       - if: always()
         run: docker compose down
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: reports/
